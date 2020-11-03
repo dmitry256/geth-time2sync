@@ -7,7 +7,6 @@ import math
 import time
 import sys
 
-# Logs producer
 async def produce_logs(q):
     previos_remaining_blocks = 0
     while True:
@@ -20,41 +19,43 @@ async def produce_logs(q):
                 await q.put((current_time,remaining_blocks))
         await asyncio.sleep(5)
 
-# Logs consumer
 async def consume_logs(q):
     last_seen_blocks = 0
     last_seen_remaining_time = ''
-    logs = pd.read_csv(sys.argv[1],sep=' ',names=['time','val'])
+    logs = pd.read_csv(sys.argv[1],sep=' ',names=['time','blocks'])
+    logs.drop_duplicates(subset=['blocks'],keep='last',inplace=True)
     while True:
-        # New info available
+        # New block available
         new_time, new_blocks = await q.get()
-        logs = logs.append({'time': new_time,'val': new_blocks}, ignore_index=True)
-        
+        logs = logs.append({'time': new_time,'blocks': new_blocks}, ignore_index=True)
+
         # Recompute deltas
         logs['time_delta'] = logs.time - logs.time.shift(1)
-        logs['val_delta'] = logs.val - logs.val.shift(1)
+        logs['blocks_delta'] = logs.blocks - logs.blocks.shift(1)
 
         # Filter delta time outliers
         min_time, max_time = logs.time_delta.quantile([0.05,0.95])
         logs = logs[(logs.time_delta > min_time) & (logs.time_delta < max_time)]
 
-        # Block/time delta weighted average time/block delays
-        time_delta_avg = (logs.time_delta * logs.val_delta).sum() / logs.val_delta.sum()
-        val_delta_avg = (logs.val_delta * logs.time_delta).sum() / logs.time_delta.sum()
+        # Block/time delta weighted averaged intervals
+        time_delta_avg = (logs.time_delta * logs.blocks_delta).sum() / logs.blocks_delta.sum()
+        blocks_delta_avg = (logs.blocks_delta * logs.time_delta).sum() / logs.time_delta.sum()
 
         # Out of sync blocks
-        blocks = logs.val.iloc[-1]
+        remaining_blocks = logs.blocks.iloc[-1]
         
         # Remaining days, hours and minutes
-        delay_d = (blocks / val_delta_avg) * (time_delta_avg / 60 / 60 / 24)
-        delay_h = math.modf(delay_d)[0] * 24
-        delay_m = math.modf(delay_h)[0] * 60
-        remaining_time = '%id,%ih,%im' % (abs(delay_d),abs(delay_h),abs(delay_m))
+        delay_d = abs((remaining_blocks / blocks_delta_avg) * (time_delta_avg / 60 / 60 / 24))
+        delay_h = abs(math.modf(delay_d)[0] * 24)
+        delay_m = abs(math.modf(delay_h)[0] * 60)
+        remaining_time = '%id,%ih,%im' % (delay_d,delay_h,delay_m)
 
-        if last_seen_blocks != blocks: print('Blocks out of sync: %i' % blocks)
-        if last_seen_remaining_time != remaining_time: print('Remaining time: %s' % remaining_time)
+        if last_seen_blocks != remaining_blocks:
+            print('Blocks out of sync: %i' % remaining_blocks)
+        if last_seen_remaining_time != remaining_time:
+            print('Remaining time: %s' % remaining_time)
 
-        last_seen_blocks = blocks
+        last_seen_blocks = remaining_blocks
         last_seen_remaining_time = remaining_time
 
 async def main():
