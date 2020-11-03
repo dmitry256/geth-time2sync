@@ -7,34 +7,36 @@ import math
 import time
 import sys
 
-async def produce_logs(q):
-    previos_remaining_blocks = 0
+async def produce_logs(q,last_seen_block=0):
+    previos_remaining_blocks = last_seen_block
     while True:
         remaining_blocks = w3.eth.syncing.highestBlock - w3.eth.syncing.currentBlock
         if previos_remaining_blocks != remaining_blocks:
             with open(sys.argv[1],'a') as log:
-                current_time = int(time.time())
-                log.write('%i %i\n' % (current_time, remaining_blocks))
+                now = int(time.time())
+                log.write('%i %i\n' % (now,remaining_blocks))
                 previos_remaining_blocks = remaining_blocks
-                await q.put((current_time,remaining_blocks))
+                await q.put((now,remaining_blocks))
         await asyncio.sleep(5)
 
-async def consume_logs(q):
+async def consume_logs(q,logs):
     last_seen_blocks = 0
     last_seen_remaining_time = ''
-    logs = pd.read_csv(sys.argv[1],sep=' ',names=['time','blocks'])
-    logs.drop_duplicates(subset=['blocks'],keep='last',inplace=True)
+    # Delay is classified as outlier when it excceds the boundaries
+    min_time, max_time = logs.time_delta.quantile([0.05,0.95])
     while True:
         # New block available
         new_time, new_blocks = await q.get()
-        logs = logs.append({'time': new_time,'blocks': new_blocks}, ignore_index=True)
+        new_event = {
+                'time': new_time,
+                'blocks': new_blocks,
+                'time_delta': new_time - logs.time.iloc[-1],
+                'blocks_delta': new_blocks - logs.blocks.iloc[-1],
+                }
+        logs = logs.append(new_event, ignore_index=True)
 
-        # Recompute deltas
-        logs['time_delta'] = logs.time - logs.time.shift(1)
-        logs['blocks_delta'] = logs.blocks - logs.blocks.shift(1)
-
+        print('New entry: %s' % new_event)
         # Filter delta time outliers
-        min_time, max_time = logs.time_delta.quantile([0.05,0.95])
         logs = logs[(logs.time_delta > min_time) & (logs.time_delta < max_time)]
 
         # Block/time delta weighted averaged intervals
@@ -60,6 +62,11 @@ async def consume_logs(q):
 
 async def main():
     q = asyncio.Queue()
-    await asyncio.gather(produce_logs(q), consume_logs(q))
+    logs = pd.read_csv(sys.argv[1],sep=' ',names=['time','blocks'])
+    logs.drop_duplicates(subset=['blocks'],keep='last',inplace=True)
+    logs['time_delta'] = logs.time - logs.time.shift(1)
+    logs['blocks_delta'] = logs.blocks - logs.blocks.shift(1)
+    await asyncio.gather(produce_logs(q,logs.blocks.iloc[-1]), consume_logs(q,logs))
 
-asyncio.run(main())
+if __name__ == '__main__':
+    asyncio.run(main())
