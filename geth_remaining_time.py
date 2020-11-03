@@ -32,7 +32,7 @@ async def poll_delays(q):
         logs['time_delta'] = logs.time - logs.time.shift(1)
         logs['val_delta'] = logs.val - logs.val.shift(1)
 
-        # Filter delta time outliers, skip last value
+        # Filter delta time outliers
         min_time, max_time = logs.time_delta.quantile([0.01,0.99])
         logs = logs[(logs.time_delta < max_time)
                 & (logs.time_delta > min_time)]
@@ -46,7 +46,7 @@ async def poll_delays(q):
         delay_d = (blocks / val_delta_avg) * (time_delta_avg / 60 / 60 / 24)
         delay_h = math.modf(delay_d)[0] * 24
         delay_m = math.modf(delay_h)[0] * 60
-        remaining_time = '%sd,%sh,%sm' % (abs(int(delay_d)),abs(int(delay_h)),abs(int(delay_m)))
+        remaining_time = '%id,%ih,%im' % (abs(delay_d),abs(delay_h),abs(delay_m))
 
         if last_seen_blocks != blocks: print('Blocks out of sync: %i' % blocks)
         if last_seen_remaining_time != remaining_time: print('Remaining time: %s' % remaining_time)
