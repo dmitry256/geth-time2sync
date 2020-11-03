@@ -24,7 +24,7 @@ async def poll_delays(q):
     last_seen_remaining_time = ''
     logs = pd.read_csv(sys.argv[1],sep=' ',names=['time','val'])
     while True:
-        # New info available
+        # New data point available
         new_time, new_blocks = await q.get()
         logs = logs.append({'time': new_time,'val': new_blocks},ignore_index=True)
         
@@ -33,11 +33,12 @@ async def poll_delays(q):
         logs['val_delta'] = logs.val - logs.val.shift(1)
 
         # Filter delta time outliers
-        min_time, max_time = logs.time_delta.quantile([0.01,0.99])
-        logs = logs[(logs.time_delta < max_time)
-                & (logs.time_delta > min_time)]
+        min_time, max_time = logs.time_delta.quantile([0.05,0.95])
+        logs = logs[(logs.time_delta > min_time) & (logs.time_delta < max_time)]
 
-        time_delta_avg, val_delta_avg = logs.time_delta.mean(), logs.val_delta.mean()
+        # Block/time delta weighted average time/block delays
+        time_delta_avg = (logs.time_delta * logs.val_delta).sum() / logs.val_delta.sum()
+        val_delta_avg = (logs.val_delta * logs.time_delta).sum() / logs.time_delta.sum()
 
         # Out of sync blocks
         blocks = logs.val.iloc[-1]
