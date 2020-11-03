@@ -7,7 +7,8 @@ import math
 import time
 import sys
 
-async def log_remaining_blocks(q):
+# Logs producer
+async def produce_logs(q):
     previos_remaining_blocks = 0
     while True:
         remaining_blocks = w3.eth.syncing.highestBlock - w3.eth.syncing.currentBlock
@@ -19,14 +20,15 @@ async def log_remaining_blocks(q):
                 await q.put((current_time,remaining_blocks))
         await asyncio.sleep(5)
 
-async def poll_delays(q):
+# Logs consumer
+async def consume_logs(q):
     last_seen_blocks = 0
     last_seen_remaining_time = ''
     logs = pd.read_csv(sys.argv[1],sep=' ',names=['time','val'])
     while True:
-        # New data point available
+        # New info available
         new_time, new_blocks = await q.get()
-        logs = logs.append({'time': new_time,'val': new_blocks},ignore_index=True)
+        logs = logs.append({'time': new_time,'val': new_blocks}, ignore_index=True)
         
         # Recompute deltas
         logs['time_delta'] = logs.time - logs.time.shift(1)
@@ -57,6 +59,6 @@ async def poll_delays(q):
 
 async def main():
     q = asyncio.Queue()
-    await asyncio.gather(log_remaining_blocks(q), poll_delays(q))
+    await asyncio.gather(produce_logs(q), consume_logs(q))
 
 asyncio.run(main())
