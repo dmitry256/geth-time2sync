@@ -10,34 +10,38 @@ import sys
 async def produce_logs(q,last_seen_block=0):
     previos_remaining_blocks = last_seen_block
     while True:
-        remaining_blocks = w3.eth.syncing.highestBlock - w3.eth.syncing.currentBlock
+        state = w3.eth.syncing
+        remaining_blocks = state.highestBlock - state.currentBlock
         if previos_remaining_blocks != remaining_blocks:
             with open(sys.argv[1],'a') as log:
                 now = int(time.time())
                 log.write('%i %i\n' % (now,remaining_blocks))
                 previos_remaining_blocks = remaining_blocks
-                await q.put((now,remaining_blocks))
+                await q.put((now, remaining_blocks))
         await asyncio.sleep(5)
 
 async def consume_logs(q,logs):
     last_seen_blocks = 0
     last_seen_remaining_time = ''
     # Delay is classified as outlier when it excceds the boundaries
-    min_time, max_time = logs.time_delta.quantile([0.05,0.95])
+    max_time = logs.time_delta.quantile(0.95)
     while True:
         # New block available
         new_time, new_blocks = await q.get()
+        new_time_delta = new_time - logs.time.iloc[-1]
         new_event = {
                 'time': new_time,
                 'blocks': new_blocks,
-                'time_delta': new_time - logs.time.iloc[-1],
+                'time_delta': new_time_delta,
                 'blocks_delta': new_blocks - logs.blocks.iloc[-1],
                 }
         logs = logs.append(new_event, ignore_index=True)
 
-        print('New entry: %s' % new_event)
+        print(('\nSynchronisation took longer than expected: %s'
+                if new_time_delta > max_time else '\nNew entry: %s') % new_event)
+
         # Filter delta time outliers
-        logs = logs[(logs.time_delta > min_time) & (logs.time_delta < max_time)]
+        logs = logs[logs.time_delta < max_time]
 
         # Block/time delta weighted averaged intervals
         time_delta_avg = (logs.time_delta * logs.blocks_delta).sum() / logs.blocks_delta.sum()
